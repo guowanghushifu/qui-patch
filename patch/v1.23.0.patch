@@ -1,0 +1,149 @@
+diff --git a/distrib/docker/Dockerfile b/distrib/docker/Dockerfile
+index c5507f0e..a2f62106 100644
+--- a/distrib/docker/Dockerfile
++++ b/distrib/docker/Dockerfile
+@@ -1,5 +1,5 @@
+ # Build stage
+-FROM node:22.18-alpine AS frontend-builder
++FROM node:24-alpine AS frontend-builder
+ 
+ # Install git for cloning
+ RUN apk add --no-cache git
+@@ -10,7 +10,7 @@ RUN npm install -g corepack@latest && \
+ 
+ WORKDIR /app/web
+ 
+-COPY web/package.json web/pnpm-lock.yaml ./
++COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+ RUN pnpm install --frozen-lockfile
+ 
+ COPY web ./
+diff --git a/internal/services/automations/service.go b/internal/services/automations/service.go
+index 5199052f..14612c9e 100644
+--- a/internal/services/automations/service.go
++++ b/internal/services/automations/service.go
+@@ -46,7 +46,7 @@ const DefaultRuleInterval = 15 * time.Minute
+ // freeSpaceDeleteCooldown prevents FREE_SPACE delete rules from running too frequently.
+ // After a successful delete-with-files caused by a FREE_SPACE rule, the next run is
+ // delayed to allow qBittorrent to refresh its disk free space reading.
+-const freeSpaceDeleteCooldown = 5 * time.Minute
++const freeSpaceDeleteCooldown = 1 * time.Minute
+ 
+ // Log messages for delete actions (reduces duplication)
+ const logMsgRemoveTorrentWithFiles = "automations: removing torrent with files"
+diff --git a/internal/services/crossseed/service.go b/internal/services/crossseed/service.go
+index f7813377..ba36e289 100644
+--- a/internal/services/crossseed/service.go
++++ b/internal/services/crossseed/service.go
+@@ -1321,8 +1321,8 @@ func (s *Service) validateAndNormalizeSettings(settings *models.CrossSeedAutomat
+ 	// RSS Automation: minimum 30 minutes between RSS feed polls, default 120 minutes
+ 	if settings.RunIntervalMinutes <= 0 {
+ 		settings.RunIntervalMinutes = 120
+-	} else if settings.RunIntervalMinutes < 30 {
+-		settings.RunIntervalMinutes = 30
++	} else if settings.RunIntervalMinutes < 1 {
++		settings.RunIntervalMinutes = 1
+ 	}
+ 	// RSS Automation: maximum number of RSS results to process per run
+ 	if settings.MaxResultsPerRun <= 0 {
+@@ -1630,7 +1630,7 @@ func (s *Service) RunAutomation(ctx context.Context, opts AutomationRunOptions)
+ 		if intervalMinutes <= 0 {
+ 			intervalMinutes = 120
+ 		}
+-		cooldown := max(time.Duration(intervalMinutes)*time.Minute, 30*time.Minute)
++		cooldown := max(time.Duration(intervalMinutes)*time.Minute, time.Minute)
+ 
+ 		lastRun, err := s.automationStore.GetLatestRun(ctx)
+ 		if err != nil {
+@@ -3146,7 +3146,7 @@ func (s *Service) computeNextRunDelay(ctx context.Context, settings *models.Cros
+ 	if intervalMinutes <= 0 {
+ 		intervalMinutes = 120
+ 	}
+-	interval := max(time.Duration(intervalMinutes)*time.Minute, 30*time.Minute)
++	interval := max(time.Duration(intervalMinutes)*time.Minute, time.Minute)
+ 
+ 	lastRun, err := s.automationStore.GetLatestRun(ctx)
+ 	if err != nil {
+diff --git a/web/src/components/instances/preferences/WorkflowDialog.tsx b/web/src/components/instances/preferences/WorkflowDialog.tsx
+index 572a13a8..124b582c 100644
+--- a/web/src/components/instances/preferences/WorkflowDialog.tsx
++++ b/web/src/components/instances/preferences/WorkflowDialog.tsx
+@@ -1286,19 +1286,6 @@ export function WorkflowDialog({ open, onOpenChange, instanceId, rule, onSuccess
+     }
+   }, [formState.actionCondition, formState.deleteEnabled, formState.exprDeleteMode, t])
+ 
+-  // Auto-switch interval from 1 minute when FREE_SPACE delete condition is added
+-  // The backend has a ~5 minute cooldown, so 1 minute intervals would be ineffective
+-  // Only switch on user edits, not during initial hydration (respect saved config)
+-  useEffect(() => {
+-    if (isHydrating.current) return
+-    if (formState.deleteEnabled && formState.intervalSeconds === 60) {
+-      if (conditionUsesField(formState.actionCondition, "FREE_SPACE")) {
+-        setFormState(prev => ({ ...prev, intervalSeconds: 300 })) // Switch to 5 minutes
+-        toast.info(t("preferences.workflowDialog.toast.switchedIntervalForFreeSpace"))
+-      }
+-    }
+-  }, [formState.actionCondition, formState.deleteEnabled, formState.intervalSeconds, t])
+-
+   // Auto-switch free space source from "path" to "qbittorrent" on Windows (not supported)
+   // This must run during hydration to handle legacy workflows opened on Windows.
+   // Only toast after hydration to avoid noise when opening dialogs.
+@@ -1622,7 +1609,7 @@ export function WorkflowDialog({ open, onOpenChange, instanceId, rule, onSuccess
+   const deleteUsesFreeSpace = formState.deleteEnabled && conditionUsesFreeSpace
+   const intervalOptions = useMemo(() => ([
+     { value: "default", label: t("preferences.workflowDialog.interval.default") },
+-    { value: "60", label: t("preferences.workflowDialog.interval.oneMinute"), disabled: deleteUsesFreeSpace },
++    { value: "60", label: t("preferences.workflowDialog.interval.oneMinute"), disabled: false },
+     { value: "300", label: t("preferences.workflowDialog.interval.fiveMinutes") },
+     { value: "900", label: t("preferences.workflowDialog.interval.fifteenMinutes") },
+     { value: "1800", label: t("preferences.workflowDialog.interval.thirtyMinutes") },
+@@ -1632,7 +1619,7 @@ export function WorkflowDialog({ open, onOpenChange, instanceId, rule, onSuccess
+     { value: "21600", label: t("preferences.workflowDialog.interval.sixHours") },
+     { value: "43200", label: t("preferences.workflowDialog.interval.twelveHours") },
+     { value: "86400", label: t("preferences.workflowDialog.interval.twentyFourHours") },
+-  ]), [deleteUsesFreeSpace, t])
++  ]), [t])
+ 
+   // Count enabled actions
+   const enabledActionsCount = [
+@@ -4116,27 +4103,6 @@ export function WorkflowDialog({ open, onOpenChange, instanceId, rule, onSuccess
+                       )}
+                     </SelectContent>
+                   </Select>
+-                  {deleteUsesFreeSpace && (
+-                    <TooltipProvider delayDuration={150}>
+-                      <Tooltip>
+-                        <TooltipTrigger asChild>
+-                          <button
+-                            type="button"
+-                            className="inline-flex items-center text-muted-foreground hover:text-foreground"
+-                            aria-label={t("preferences.workflowDialog.interval.cooldownAria")}
+-                          >
+-                            <Info className="h-3.5 w-3.5" />
+-                          </button>
+-                        </TooltipTrigger>
+-                        <TooltipContent className="max-w-[280px]">
+-                          <p>{t("preferences.workflowDialog.interval.cooldownDescription")}</p>
+-                        </TooltipContent>
+-                      </Tooltip>
+-                    </TooltipProvider>
+-                  )}
+-                  {deleteUsesFreeSpace && formState.intervalSeconds === 60 && (
+-                    <span className="text-xs text-yellow-500">{t("preferences.workflowDialog.interval.cooldownWarning")}</span>
+-                  )}
+                 </div>
+               </div>
+               <div className="flex gap-2 w-full sm:w-auto">
+diff --git a/web/src/pages/CrossSeedPage.tsx b/web/src/pages/CrossSeedPage.tsx
+index 41ba5b69..a46e17dc 100644
+--- a/web/src/pages/CrossSeedPage.tsx
++++ b/web/src/pages/CrossSeedPage.tsx
+@@ -140,7 +140,7 @@ interface GlobalCrossSeedSettings {
+ type CategoryMode = "reuse" | "affix" | "indexer" | "custom"
+ 
+ // RSS Automation constants
+-const MIN_RSS_INTERVAL_MINUTES = 30   // RSS: minimum interval between RSS feed polls
++const MIN_RSS_INTERVAL_MINUTES = 1   // RSS: minimum interval between RSS feed polls
+ const DEFAULT_RSS_INTERVAL_MINUTES = 120  // RSS: default interval (2 hours)
+ const MIN_SEEDED_SEARCH_INTERVAL_SECONDS = 60  // Seeded Search: minimum interval between torrents
+ const MIN_GAZELLE_ONLY_SEARCH_INTERVAL_SECONDS = 5  // Gazelle-only seeded search: still be polite; per-torrent work can trigger multiple API calls
