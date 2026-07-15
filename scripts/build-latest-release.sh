@@ -135,6 +135,13 @@ fi
 echo "Building qui release $latest_tag..."
 make -C "$release_worktree" VERSION="$latest_tag" build/docker
 
+if [[ -n ${QUI_DOCKERHUB_IMAGE:-} ]]; then
+  command -v docker >/dev/null 2>&1 || fail "docker is required when QUI_DOCKERHUB_IMAGE is set"
+  echo "Publishing Docker image to $QUI_DOCKERHUB_IMAGE..."
+  docker tag ghcr.io/autobrr/qui:dev "$QUI_DOCKERHUB_IMAGE"
+  docker push "$QUI_DOCKERHUB_IMAGE"
+fi
+
 state_tmp=$(mktemp "$state_dir/.last-successful-release.XXXXXX")
 trap 'rm -f "${state_tmp:-}"' EXIT
 printf '%s\n' "$latest_tag" >"$state_tmp"

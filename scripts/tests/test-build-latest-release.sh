@@ -41,6 +41,7 @@ stub_dir="$tmp_dir/bin"
 make_log="$tmp_dir/make.log"
 patch_log="$tmp_dir/patch.log"
 telegram_log="$tmp_dir/telegram.log"
+docker_log="$tmp_dir/docker.log"
 
 git init -q --bare "$remote"
 git init -q "$seed"
@@ -114,6 +115,15 @@ if [[ ${FAIL_DOCKER_BUILD:-0} == 1 && $* == *"build/docker"* ]]; then
 fi
 EOF
 
+cat >"$stub_dir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${DOCKER_LOG:?}"
+if [[ ${FAIL_DOCKER_PUSH:-0} == 1 && ${1:-} == "push" ]]; then
+  exit 66
+fi
+EOF
+
 patch_stub="$tmp_dir/patch-stub.sh"
 cat >"$patch_stub" <<'EOF'
 #!/usr/bin/env bash
@@ -125,7 +135,7 @@ if [[ ${FAIL_PATCH:-0} == 1 ]]; then
 fi
 EOF
 
-chmod +x "$stub_dir/curl" "$stub_dir/make" "$patch_stub"
+chmod +x "$stub_dir/curl" "$stub_dir/make" "$stub_dir/docker" "$patch_stub"
 
 run_builder() {
   local tag=$1
@@ -133,6 +143,8 @@ run_builder() {
   local fail_patch=${3:-0}
   local fail_telegram=${4:-0}
   local telegram_configured=${5:-1}
+  local dockerhub_image=${6:-}
+  local fail_docker_push=${7:-0}
   local telegram_token=""
   local telegram_chat_id=""
 
@@ -149,8 +161,11 @@ run_builder() {
     MAKE_LOG="$make_log" \
     PATCH_LOG="$patch_log" \
     TELEGRAM_LOG="$telegram_log" \
+    DOCKER_LOG="$docker_log" \
+    FAIL_DOCKER_PUSH="$fail_docker_push" \
     QUI_TELEGRAM_BOT_TOKEN="$telegram_token" \
     QUI_TELEGRAM_CHAT_ID="$telegram_chat_id" \
+    QUI_DOCKERHUB_IMAGE="$dockerhub_image" \
     QUI_PATCH_SCRIPT="$patch_stub" \
     QUI_RELEASE_WORKTREE_ROOT="$worktree_root" \
     bash "$builder_script" "$primary"
@@ -200,6 +215,8 @@ sed -n '3p' "$make_log" | grep -Eq -- '-C .+ VERSION=v1\.1\.0 build/docker$' || 
   fail "retried Docker build did not receive the v1.1.0 release version"
 [[ ! -e "$worktree_root/v1.0.0" ]] || fail "old successful worktree was not cleaned up"
 [[ -d "$worktree_root/v1.1.0" ]] || fail "latest successful worktree was not retained"
+[[ $(line_count "$docker_log") -eq 0 ]] || \
+  fail "unset QUI_DOCKERHUB_IMAGE should not tag or push an image"
 
 printf 'v3\n' >"$seed/README.md"
 git -C "$seed" add README.md
@@ -235,5 +252,36 @@ set -e
 [[ "$telegram_failure_status" -eq 23 ]] || fail "Telegram failure replaced the patch exit status"
 [[ "$missing_config_status" -eq 23 ]] || fail "missing Telegram config replaced the patch exit status"
 [[ $(line_count "$make_log") -eq 3 ]] || fail "patch retries should not start Docker builds"
+
+printf 'v4\n' >"$seed/README.md"
+git -C "$seed" add README.md
+git -C "$seed" commit -qm "release v1.3.0"
+git -C "$seed" tag v1.3.0
+git -C "$seed" push -q origin develop v1.3.0
+
+dockerhub_image="guowanghushifu/qui:dev"
+set +e
+run_builder v1.3.0 0 0 0 1 "$dockerhub_image" 1
+push_failure_status=$?
+set -e
+[[ "$push_failure_status" -eq 66 ]] || fail "Docker push failure status was not preserved"
+assert_file_value "$state_file" v1.1.0
+[[ -d "$worktree_root/v1.3.0" ]] || fail "failed push worktree was not retained"
+[[ $(line_count "$docker_log") -eq 2 ]] || fail "failed publish should tag once and push once"
+sed -n '1p' "$docker_log" | grep -Fqx "tag ghcr.io/autobrr/qui:dev $dockerhub_image" || \
+  fail "Docker image was not tagged with QUI_DOCKERHUB_IMAGE"
+sed -n '2p' "$docker_log" | grep -Fqx "push $dockerhub_image" || \
+  fail "Docker push used the wrong image"
+
+run_builder v1.3.0 0 0 0 1 "$dockerhub_image"
+assert_file_value "$state_file" v1.3.0
+[[ $(line_count "$docker_log") -eq 4 ]] || fail "publish retry should tag and push again"
+sed -n '3p' "$docker_log" | grep -Fqx "tag ghcr.io/autobrr/qui:dev $dockerhub_image" || \
+  fail "publish retry used the wrong Docker tag command"
+sed -n '4p' "$docker_log" | grep -Fqx "push $dockerhub_image" || \
+  fail "publish retry used the wrong Docker push command"
+[[ ! -e "$worktree_root/v1.1.0" ]] || fail "old successful worktree was not cleaned after push"
+[[ ! -e "$worktree_root/v1.2.0" ]] || fail "old failed worktree was not cleaned after push"
+[[ -d "$worktree_root/v1.3.0" ]] || fail "latest pushed worktree was not retained"
 
 echo "PASS: build-latest-release"
