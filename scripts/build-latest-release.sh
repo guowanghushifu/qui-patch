@@ -94,8 +94,7 @@ echo "Applying one-minute limits to $latest_tag..."
 "$patch_script" "$release_worktree"
 
 echo "Building qui release $latest_tag..."
-# make -C "$release_worktree" build
-make -C "$release_worktree" build/docker
+make -C "$release_worktree" VERSION="$latest_tag" build/docker
 
 state_tmp=$(mktemp "$state_dir/.last-successful-release.XXXXXX")
 trap 'rm -f "${state_tmp:-}"' EXIT
