@@ -105,14 +105,14 @@ state_file="$primary/.git/qui-release-builder/last-successful-release"
 run_builder v1.0.0
 assert_file_value "$state_file" v1.0.0
 [[ $(line_count "$patch_log") -eq 1 ]] || fail "first release should be patched once"
-[[ $(line_count "$make_log") -eq 2 ]] || fail "first release should run two make targets"
-sed -n '1p' "$make_log" | grep -Eq -- '-C .+ build$' || fail "make build was not first"
-sed -n '2p' "$make_log" | grep -Eq -- '-C .+ build/docker$' || fail "make build/docker was not second"
+[[ $(line_count "$make_log") -eq 1 ]] || fail "first release should run one make target"
+sed -n '1p' "$make_log" | grep -Eq -- '-C .+ VERSION=v1\.0\.0 build/docker$' || \
+  fail "make build/docker did not receive the v1.0.0 release version"
 [[ -d "$worktree_root/v1.0.0" ]] || fail "v1.0.0 worktree was not retained"
 
 run_builder v1.0.0
 [[ $(line_count "$patch_log") -eq 1 ]] || fail "unchanged release should not patch again"
-[[ $(line_count "$make_log") -eq 2 ]] || fail "unchanged release should not build again"
+[[ $(line_count "$make_log") -eq 1 ]] || fail "unchanged release should not build again"
 
 printf 'v2\n' >"$seed/README.md"
 git -C "$seed" add README.md
@@ -127,7 +127,9 @@ assert_file_value "$state_file" v1.0.0
 [[ -d "$worktree_root/v1.0.0" ]] || fail "old successful worktree was removed after failure"
 [[ -d "$worktree_root/v1.1.0" ]] || fail "failed release worktree was not retained"
 [[ $(line_count "$patch_log") -eq 2 ]] || fail "failed release should be patched once"
-[[ $(line_count "$make_log") -eq 4 ]] || fail "failed release should attempt both make targets"
+[[ $(line_count "$make_log") -eq 2 ]] || fail "failed release should attempt the Docker build once"
+sed -n '2p' "$make_log" | grep -Eq -- '-C .+ VERSION=v1\.1\.0 build/docker$' || \
+  fail "failed Docker build did not receive the v1.1.0 release version"
 
 run_builder v1.1.0
 assert_file_value "$state_file" v1.1.0
@@ -137,7 +139,9 @@ git -C "$primary" merge-base --is-ancestor origin/develop HEAD || \
 git -C "$primary" log --format=%s -1 | grep -Fqx 'add local release tooling' || \
   fail "local release tooling commit was not rebased on top of upstream"
 [[ $(line_count "$patch_log") -eq 3 ]] || fail "retry should patch the retained worktree"
-[[ $(line_count "$make_log") -eq 6 ]] || fail "retry should run both make targets"
+[[ $(line_count "$make_log") -eq 3 ]] || fail "retry should run the Docker build once"
+sed -n '3p' "$make_log" | grep -Eq -- '-C .+ VERSION=v1\.1\.0 build/docker$' || \
+  fail "retried Docker build did not receive the v1.1.0 release version"
 [[ ! -e "$worktree_root/v1.0.0" ]] || fail "old successful worktree was not cleaned up"
 [[ -d "$worktree_root/v1.1.0" ]] || fail "latest successful worktree was not retained"
 
