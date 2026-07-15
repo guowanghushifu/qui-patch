@@ -40,6 +40,7 @@ worktree_root="$tmp_dir/worktrees"
 stub_dir="$tmp_dir/bin"
 make_log="$tmp_dir/make.log"
 patch_log="$tmp_dir/patch.log"
+telegram_log="$tmp_dir/telegram.log"
 
 git init -q --bare "$remote"
 git init -q "$seed"
@@ -66,7 +67,42 @@ mkdir -p "$stub_dir"
 cat >"$stub_dir/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'https://github.com/autobrr/qui/releases/tag/%s' "${FAKE_RELEASE_TAG:?}"
+
+url=""
+chat_id=""
+text=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --data-urlencode)
+      shift
+      case "$1" in
+        chat_id=*) chat_id=${1#chat_id=} ;;
+        text=*) text=${1#text=} ;;
+      esac
+      ;;
+    http://*|https://*)
+      url=$1
+      ;;
+  esac
+  shift
+done
+
+if [[ "$url" == "https://github.com/autobrr/qui/releases/latest" ]]; then
+  printf 'https://github.com/autobrr/qui/releases/tag/%s' "${FAKE_RELEASE_TAG:?}"
+  exit 0
+fi
+
+if [[ "$url" == https://api.telegram.org/bot*/sendMessage ]]; then
+  text=${text//$'\n'/\\n}
+  printf 'url=%s|chat_id=%s|text=%s\n' "$url" "$chat_id" "$text" >>"${TELEGRAM_LOG:?}"
+  if [[ ${FAIL_TELEGRAM:-0} == 1 ]]; then
+    exit 50
+  fi
+  exit 0
+fi
+
+echo "unexpected curl URL: $url" >&2
+exit 90
 EOF
 
 cat >"$stub_dir/make" <<'EOF'
@@ -83,6 +119,10 @@ cat >"$patch_stub" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$1" >>"${PATCH_LOG:?}"
+if [[ ${FAIL_PATCH:-0} == 1 ]]; then
+  echo "simulated patch failure" >&2
+  exit 23
+fi
 EOF
 
 chmod +x "$stub_dir/curl" "$stub_dir/make" "$patch_stub"
@@ -90,11 +130,27 @@ chmod +x "$stub_dir/curl" "$stub_dir/make" "$patch_stub"
 run_builder() {
   local tag=$1
   local fail_docker=${2:-0}
+  local fail_patch=${3:-0}
+  local fail_telegram=${4:-0}
+  local telegram_configured=${5:-1}
+  local telegram_token=""
+  local telegram_chat_id=""
+
+  if [[ "$telegram_configured" == 1 ]]; then
+    telegram_token="test-token"
+    telegram_chat_id="-100123"
+  fi
+
   PATH="$stub_dir:$PATH" \
     FAKE_RELEASE_TAG="$tag" \
     FAIL_DOCKER_BUILD="$fail_docker" \
+    FAIL_PATCH="$fail_patch" \
+    FAIL_TELEGRAM="$fail_telegram" \
     MAKE_LOG="$make_log" \
     PATCH_LOG="$patch_log" \
+    TELEGRAM_LOG="$telegram_log" \
+    QUI_TELEGRAM_BOT_TOKEN="$telegram_token" \
+    QUI_TELEGRAM_CHAT_ID="$telegram_chat_id" \
     QUI_PATCH_SCRIPT="$patch_stub" \
     QUI_RELEASE_WORKTREE_ROOT="$worktree_root" \
     bash "$builder_script" "$primary"
@@ -144,5 +200,40 @@ sed -n '3p' "$make_log" | grep -Eq -- '-C .+ VERSION=v1\.1\.0 build/docker$' || 
   fail "retried Docker build did not receive the v1.1.0 release version"
 [[ ! -e "$worktree_root/v1.0.0" ]] || fail "old successful worktree was not cleaned up"
 [[ -d "$worktree_root/v1.1.0" ]] || fail "latest successful worktree was not retained"
+
+printf 'v3\n' >"$seed/README.md"
+git -C "$seed" add README.md
+git -C "$seed" commit -qm "release v1.2.0"
+git -C "$seed" tag v1.2.0
+git -C "$seed" push -q origin develop v1.2.0
+
+set +e
+run_builder v1.2.0 0 1
+patch_status=$?
+set -e
+[[ "$patch_status" -eq 23 ]] || fail "patch failure exit status was not preserved"
+assert_file_value "$state_file" v1.1.0
+[[ $(line_count "$make_log") -eq 3 ]] || fail "patch failure should not start a Docker build"
+[[ -d "$worktree_root/v1.2.0" ]] || fail "failed patch worktree was not retained"
+failed_patch_worktree=$(cd "$worktree_root/v1.2.0" && pwd -P)
+[[ $(line_count "$telegram_log") -eq 1 ]] || fail "patch failure should send one Telegram notification"
+grep -Fq 'url=https://api.telegram.org/bottest-token/sendMessage|chat_id=-100123|' "$telegram_log" || \
+  fail "Telegram notification used the wrong endpoint or chat ID"
+grep -Fq 'Release: v1.2.0' "$telegram_log" || fail "Telegram notification omitted the release tag"
+grep -Fq 'Host: ' "$telegram_log" || fail "Telegram notification omitted the hostname"
+grep -Fq "Patch script: $patch_stub" "$telegram_log" || \
+  fail "Telegram notification omitted the patch script path"
+grep -Fq "Worktree: $failed_patch_worktree" "$telegram_log" || \
+  fail "Telegram notification omitted the release worktree"
+
+set +e
+run_builder v1.2.0 0 1 1
+telegram_failure_status=$?
+run_builder v1.2.0 0 1 0 0
+missing_config_status=$?
+set -e
+[[ "$telegram_failure_status" -eq 23 ]] || fail "Telegram failure replaced the patch exit status"
+[[ "$missing_config_status" -eq 23 ]] || fail "missing Telegram config replaced the patch exit status"
+[[ $(line_count "$make_log") -eq 3 ]] || fail "patch retries should not start Docker builds"
 
 echo "PASS: build-latest-release"

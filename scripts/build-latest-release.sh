@@ -7,6 +7,37 @@ fail() {
   exit 1
 }
 
+notify_patch_failure() {
+  local release_tag=$1
+  local patch_path=$2
+  local worktree_path=$3
+
+  if [[ -z ${QUI_TELEGRAM_BOT_TOKEN:-} || -z ${QUI_TELEGRAM_CHAT_ID:-} ]]; then
+    echo "warning: patch failed but Telegram notification is not configured" >&2
+    return 1
+  fi
+
+  local host_name
+  host_name=$(hostname 2>/dev/null || printf 'unknown')
+
+  local message
+  printf -v message \
+    'qui release patch failed\nRelease: %s\nHost: %s\nPatch script: %s\nWorktree: %s' \
+    "$release_tag" "$host_name" "$patch_path" "$worktree_path"
+
+  if ! curl -fsS \
+    --connect-timeout 10 \
+    --max-time 30 \
+    --request POST \
+    --data-urlencode "chat_id=${QUI_TELEGRAM_CHAT_ID}" \
+    --data-urlencode "text=$message" \
+    "https://api.telegram.org/bot${QUI_TELEGRAM_BOT_TOKEN}/sendMessage" \
+    >/dev/null; then
+    echo "warning: failed to send Telegram patch failure notification" >&2
+    return 1
+  fi
+}
+
 for command_name in git curl make; do
   command -v "$command_name" >/dev/null 2>&1 || fail "$command_name is required"
 done
@@ -91,7 +122,15 @@ patch_script=${QUI_PATCH_SCRIPT:-"$repo/scripts/apply-one-minute-limits.sh"}
 [[ -x "$patch_script" ]] || fail "patch script is not executable: $patch_script"
 
 echo "Applying one-minute limits to $latest_tag..."
-"$patch_script" "$release_worktree"
+if "$patch_script" "$release_worktree"; then
+  :
+else
+  patch_status=$?
+  if ! notify_patch_failure "$latest_tag" "$patch_script" "$release_worktree"; then
+    :
+  fi
+  exit "$patch_status"
+fi
 
 echo "Building qui release $latest_tag..."
 make -C "$release_worktree" VERSION="$latest_tag" build/docker
