@@ -45,6 +45,9 @@ relative_paths = (
     "internal/services/crossseed/service.go",
     "web/src/pages/CrossSeedPage.tsx",
     "web/src/components/instances/preferences/WorkflowDialog.tsx",
+    "web/src/components/torrents/TorrentCardsMobile.tsx",
+    "web/src/components/torrents/TorrentTableColumns.tsx",
+    "web/src/components/torrents/table/CompactRow.tsx",
 )
 
 required_paths = (*relative_paths, "web/pnpm-workspace.yaml")
@@ -225,6 +228,72 @@ replace_required(
     r"const MIN_RSS_INTERVAL_MINUTES = \d+",
     "const MIN_RSS_INTERVAL_MINUTES = 1",
 )
+
+table_columns_path = "web/src/components/torrents/TorrentTableColumns.tsx"
+accept_old_or_new(
+    table_columns_path,
+    "torrent table incognito Ratio import",
+    r"(  getLinuxIsoName,\n)  getLinuxRatio,\n(  getLinuxSavePath,)",
+    r"(  getLinuxIsoName,\n)(  getLinuxSavePath,)",
+    r"\g<1>\g<2>",
+)
+accept_old_or_new(
+    table_columns_path,
+    "torrent table Ratio display",
+    r"const ratio = incognitoMode \? getLinuxRatio\(row\.original\.hash\) : row\.original\.ratio",
+    r"const ratio = row\.original\.ratio",
+    "const ratio = row.original.ratio",
+)
+accept_old_or_new(
+    table_columns_path,
+    "torrent table Ratio sort left value",
+    r"const ratioA = incognitoMode \? getLinuxRatio\(rowA\.original\.hash\) : rowA\.original\.ratio",
+    r"const ratioA = rowA\.original\.ratio",
+    "const ratioA = rowA.original.ratio",
+)
+accept_old_or_new(
+    table_columns_path,
+    "torrent table Ratio sort right value",
+    r"const ratioB = incognitoMode \? getLinuxRatio\(rowB\.original\.hash\) : rowB\.original\.ratio",
+    r"const ratioB = rowB\.original\.ratio",
+    "const ratioB = rowB.original.ratio",
+)
+
+compact_row_path = "web/src/components/torrents/table/CompactRow.tsx"
+accept_old_or_new(
+    compact_row_path,
+    "compact torrent incognito Ratio import",
+    r'import \{ getLinuxCategory, getLinuxIsoName, getLinuxRatio, getLinuxTags, getLinuxTracker \} from "@/lib/incognito"',
+    r'import \{ getLinuxCategory, getLinuxIsoName, getLinuxTags, getLinuxTracker \} from "@/lib/incognito"',
+    'import { getLinuxCategory, getLinuxIsoName, getLinuxTags, getLinuxTracker } from "@/lib/incognito"',
+)
+accept_old_or_new(
+    compact_row_path,
+    "compact torrent Ratio display",
+    r"const displayRatio = incognitoMode \? getLinuxRatio\(torrent\.hash\) : torrent\.ratio",
+    r"const displayRatio = torrent\.ratio",
+    "const displayRatio = torrent.ratio",
+)
+
+mobile_cards_path = "web/src/components/torrents/TorrentCardsMobile.tsx"
+accept_old_or_new(
+    mobile_cards_path,
+    "mobile torrent card incognito Ratio import",
+    r'import \{ getLinuxCategory, getLinuxIsoName, getLinuxRatio, getLinuxTags, getLinuxTracker, useIncognitoMode \} from "@/lib/incognito"',
+    r'import \{ getLinuxCategory, getLinuxIsoName, getLinuxTags, getLinuxTracker, useIncognitoMode \} from "@/lib/incognito"',
+    'import { getLinuxCategory, getLinuxIsoName, getLinuxTags, getLinuxTracker, useIncognitoMode } from "@/lib/incognito"',
+)
+accept_old_or_new(
+    mobile_cards_path,
+    "mobile torrent card Ratio display",
+    r"const displayRatio = incognitoMode \? getLinuxRatio\(torrent\.hash\) : torrent\.ratio",
+    r"const displayRatio = torrent\.ratio",
+    "const displayRatio = torrent.ratio",
+)
+
+for ratio_path in (table_columns_path, compact_row_path, mobile_cards_path):
+    if "getLinuxRatio" in updated[ratio_path]:
+        raise PatchError(f"unexpected getLinuxRatio reference remains in {ratio_path}")
 
 
 def write_atomic(path: Path, content: str) -> None:

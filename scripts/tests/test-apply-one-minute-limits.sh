@@ -24,6 +24,17 @@ assert_not_contains() {
   fi
 }
 
+assert_count() {
+  local file=$1
+  local pattern=$2
+  local expected=$3
+  local actual
+
+  actual=$(grep -Eoc "$pattern" "$file" || true)
+  [[ "$actual" -eq "$expected" ]] || \
+    fail "expected $expected match(es) in $file, got $actual: $pattern"
+}
+
 copy_fixture() {
   local target=$1
   local relative
@@ -33,6 +44,9 @@ copy_fixture() {
     internal/services/automations/service.go \
     internal/services/crossseed/service.go \
     web/pnpm-workspace.yaml \
+    web/src/components/torrents/TorrentCardsMobile.tsx \
+    web/src/components/torrents/TorrentTableColumns.tsx \
+    web/src/components/torrents/table/CompactRow.tsx \
     web/src/pages/CrossSeedPage.tsx \
     web/src/components/instances/preferences/WorkflowDialog.tsx; do
     mkdir -p "$target/$(dirname "$relative")"
@@ -92,6 +106,57 @@ grep -Fq \
 assert_not_contains \
   "$fixture/web/src/components/instances/preferences/WorkflowDialog.tsx" \
   'cooldownAria|cooldownDescription|cooldownWarning'
+
+assert_not_contains \
+  "$fixture/web/src/components/torrents/TorrentTableColumns.tsx" \
+  'getLinuxRatio'
+assert_contains \
+  "$fixture/web/src/components/torrents/TorrentTableColumns.tsx" \
+  'const ratio = row\.original\.ratio'
+assert_contains \
+  "$fixture/web/src/components/torrents/TorrentTableColumns.tsx" \
+  'const ratioA = rowA\.original\.ratio'
+assert_contains \
+  "$fixture/web/src/components/torrents/TorrentTableColumns.tsx" \
+  'const ratioB = rowB\.original\.ratio'
+assert_count \
+  "$fixture/web/src/components/torrents/TorrentTableColumns.tsx" \
+  'const speed = row\.original\.dlspeed' \
+  1
+assert_count \
+  "$fixture/web/src/components/torrents/TorrentTableColumns.tsx" \
+  'const speed = row\.original\.upspeed' \
+  1
+
+assert_not_contains \
+  "$fixture/web/src/components/torrents/table/CompactRow.tsx" \
+  'getLinuxRatio'
+assert_contains \
+  "$fixture/web/src/components/torrents/table/CompactRow.tsx" \
+  'const displayRatio = torrent\.ratio'
+assert_count \
+  "$fixture/web/src/components/torrents/table/CompactRow.tsx" \
+  'formatSpeedWithUnit\(torrent\.dlspeed, speedUnit\)' \
+  1
+assert_count \
+  "$fixture/web/src/components/torrents/table/CompactRow.tsx" \
+  'formatSpeedWithUnit\(torrent\.upspeed, speedUnit\)' \
+  1
+
+assert_not_contains \
+  "$fixture/web/src/components/torrents/TorrentCardsMobile.tsx" \
+  'getLinuxRatio'
+assert_contains \
+  "$fixture/web/src/components/torrents/TorrentCardsMobile.tsx" \
+  'const displayRatio = torrent\.ratio'
+assert_count \
+  "$fixture/web/src/components/torrents/TorrentCardsMobile.tsx" \
+  'formatSpeedWithUnit\(torrent\.dlspeed, speedUnit\)' \
+  3
+assert_count \
+  "$fixture/web/src/components/torrents/TorrentCardsMobile.tsx" \
+  'formatSpeedWithUnit\(torrent\.upspeed, speedUnit\)' \
+  3
 
 first_checksum=$(fixture_checksum "$fixture")
 bash "$patch_script" "$fixture"
@@ -166,6 +231,68 @@ grep -Fq 'Docker frontend builder Node version' "$tmp_dir/broken-docker.err" || 
   fail "failure did not identify the Docker frontend builder matcher"
 if grep -Fq 'Traceback' "$tmp_dir/broken-docker.err"; then
   fail "Docker failure leaked a Python traceback"
+fi
+
+broken_ratio_fixture="$tmp_dir/broken-ratio"
+copy_fixture "$broken_ratio_fixture"
+python3 - "$broken_ratio_fixture/web/src/components/torrents/table/CompactRow.tsx" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+old = "const displayRatio = incognitoMode ? getLinuxRatio(torrent.hash) : torrent.ratio"
+patched = "const displayRatio = torrent.ratio"
+if old in text:
+    text = text.replace(old, "const displayRatio = getDisplayedRatio(torrent)", 1)
+elif patched in text:
+    text = text.replace(patched, "const displayRatio = getDisplayedRatio(torrent)", 1)
+else:
+    raise SystemExit("compact Ratio fixture anchor is missing")
+path.write_text(text)
+PY
+
+before_ratio_failure=$(fixture_checksum "$broken_ratio_fixture")
+if bash "$patch_script" "$broken_ratio_fixture" \
+  >"$tmp_dir/broken-ratio.out" 2>"$tmp_dir/broken-ratio.err"; then
+  fail "patch unexpectedly succeeded with a missing Ratio semantic anchor"
+fi
+after_ratio_failure=$(fixture_checksum "$broken_ratio_fixture")
+[[ "$before_ratio_failure" == "$after_ratio_failure" ]] || \
+  fail "failed Ratio patch partially changed files"
+grep -Fq 'compact torrent Ratio display' "$tmp_dir/broken-ratio.err" || \
+  fail "failure did not identify the compact torrent Ratio matcher"
+if grep -Fq 'Traceback' "$tmp_dir/broken-ratio.err"; then
+  fail "Ratio failure leaked a Python traceback"
+fi
+
+extra_ratio_fixture="$tmp_dir/extra-ratio-reference"
+copy_fixture "$extra_ratio_fixture"
+python3 - "$extra_ratio_fixture/web/src/components/torrents/table/CompactRow.tsx" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+anchor = "const displayRatio = incognitoMode ? getLinuxRatio(torrent.hash) : torrent.ratio"
+if anchor not in text:
+    raise SystemExit("compact Ratio fixture anchor is missing")
+text = text.replace(anchor, f"{anchor}\n  const secondaryRatio = getLinuxRatio(torrent.hash)", 1)
+path.write_text(text)
+PY
+
+before_extra_ratio_failure=$(fixture_checksum "$extra_ratio_fixture")
+if bash "$patch_script" "$extra_ratio_fixture" \
+  >"$tmp_dir/extra-ratio-reference.out" 2>"$tmp_dir/extra-ratio-reference.err"; then
+  fail "patch unexpectedly succeeded with an additional getLinuxRatio consumer"
+fi
+after_extra_ratio_failure=$(fixture_checksum "$extra_ratio_fixture")
+[[ "$before_extra_ratio_failure" == "$after_extra_ratio_failure" ]] || \
+  fail "additional Ratio consumer failure partially changed files"
+grep -Fq 'unexpected getLinuxRatio reference' "$tmp_dir/extra-ratio-reference.err" || \
+  fail "failure did not identify the unexpected getLinuxRatio reference"
+if grep -Fq 'Traceback' "$tmp_dir/extra-ratio-reference.err"; then
+  fail "additional Ratio consumer failure leaked a Python traceback"
 fi
 
 echo "PASS: apply-one-minute-limits"
