@@ -134,6 +134,82 @@ index 572a13a8..124b582c 100644
                  </div>
                </div>
                <div className="flex gap-2 w-full sm:w-auto">
+diff --git a/web/src/components/torrents/TorrentCardsMobile.tsx b/web/src/components/torrents/TorrentCardsMobile.tsx
+index adf2c63e..d63c2534 100644
+--- a/web/src/components/torrents/TorrentCardsMobile.tsx
++++ b/web/src/components/torrents/TorrentCardsMobile.tsx
+@@ -110,7 +110,7 @@ import { useCrossSeedFilter } from "@/hooks/useCrossSeedFilter"
+ import { useInstanceCapabilities } from "@/hooks/useInstanceCapabilities"
+ import { useInstanceMetadata } from "@/hooks/useInstanceMetadata.ts"
+ import { usePersistedCompactViewState, type ViewMode } from "@/hooks/usePersistedCompactViewState"
+-import { getLinuxCategory, getLinuxIsoName, getLinuxRatio, getLinuxTags, getLinuxTracker, useIncognitoMode } from "@/lib/incognito"
++import { getLinuxCategory, getLinuxIsoName, getLinuxTags, getLinuxTracker, useIncognitoMode } from "@/lib/incognito"
+ import { formatSpeedWithUnit, useSpeedUnits, type SpeedUnit } from "@/lib/speedUnits"
+ import { getStateLabel } from "@/lib/torrent-state-utils"
+ import { cn, formatBytes, getRatioColor } from "@/lib/utils"
+@@ -713,7 +713,7 @@ function SwipeableCard({
+   const displayName = incognitoMode ? getLinuxIsoName(torrent.hash) : torrent.name
+   const displayCategory = incognitoMode ? getLinuxCategory(torrent.hash) : torrent.category
+   const displayTags = incognitoMode ? getLinuxTags(torrent.hash) : torrent.tags
+-  const displayRatio = incognitoMode ? getLinuxRatio(torrent.hash) : torrent.ratio
++  const displayRatio = torrent.ratio
+   const { variant: statusBadgeVariant, label: statusBadgeLabel, className: statusBadgeClass } = useMemo(
+     () => getStatusBadgeProps(torrent, supportsTrackerHealth, t),
+     [torrent, supportsTrackerHealth, t]
+diff --git a/web/src/components/torrents/TorrentTableColumns.tsx b/web/src/components/torrents/TorrentTableColumns.tsx
+index f8ebe11d..6312c936 100644
+--- a/web/src/components/torrents/TorrentTableColumns.tsx
++++ b/web/src/components/torrents/TorrentTableColumns.tsx
+@@ -15,7 +15,6 @@ import {
+   getLinuxCategory,
+   getLinuxHash,
+   getLinuxIsoName,
+-  getLinuxRatio,
+   getLinuxSavePath,
+   getLinuxTags,
+   getLinuxTracker
+@@ -771,7 +770,7 @@ export const createColumns = (
+       accessorKey: "ratio",
+       header: t?.("tableColumns.ratio") ?? "Ratio",
+       cell: ({ row }) => {
+-        const ratio = incognitoMode ? getLinuxRatio(row.original.hash) : row.original.ratio
++        const ratio = row.original.ratio
+         const displayRatio = ratio === -1 ? "∞" : ratio.toFixed(2)
+         const colorVar = getRatioColor(ratio)
+ 
+@@ -785,8 +784,8 @@ export const createColumns = (
+         )
+       },
+       sortingFn: (rowA, rowB) => {
+-        const ratioA = incognitoMode ? getLinuxRatio(rowA.original.hash) : rowA.original.ratio
+-        const ratioB = incognitoMode ? getLinuxRatio(rowB.original.hash) : rowB.original.ratio
++        const ratioA = rowA.original.ratio
++        const ratioB = rowB.original.ratio
+ 
+         // Handle infinity values: -1 should be treated as the highest value
+         if (ratioA === -1 && ratioB === -1) return 0
+diff --git a/web/src/components/torrents/table/CompactRow.tsx b/web/src/components/torrents/table/CompactRow.tsx
+index 1cec0cc3..b66ea091 100644
+--- a/web/src/components/torrents/table/CompactRow.tsx
++++ b/web/src/components/torrents/table/CompactRow.tsx
+@@ -5,7 +5,7 @@
+ 
+ import { Badge } from "@/components/ui/badge"
+ import { Checkbox } from "@/components/ui/checkbox"
+-import { getLinuxCategory, getLinuxIsoName, getLinuxRatio, getLinuxTags, getLinuxTracker } from "@/lib/incognito"
++import { getLinuxCategory, getLinuxIsoName, getLinuxTags, getLinuxTracker } from "@/lib/incognito"
+ import { formatSpeedWithUnit } from "@/lib/speedUnits"
+ import { getRowBackgroundClass, getStatusBadgeProps } from "@/lib/torrent-table/row-display"
+ import { extractTrackerHost, resolveTrackerDisplay, type TrackerCustomizationLookup } from "@/lib/tracker-customizations"
+@@ -59,7 +59,7 @@ export const CompactRow = memo(({
+   const displayName = incognitoMode ? getLinuxIsoName(torrent.hash) : torrent.name
+   const displayCategory = incognitoMode ? getLinuxCategory(torrent.hash) : torrent.category
+   const displayTags = incognitoMode ? getLinuxTags(torrent.hash) : torrent.tags
+-  const displayRatio = incognitoMode ? getLinuxRatio(torrent.hash) : torrent.ratio
++  const displayRatio = torrent.ratio
+ 
+   const { variant: statusBadgeVariant, label: statusBadgeLabel, className: statusBadgeClass } = useMemo(
+     () => getStatusBadgeProps(torrent, supportsTrackerHealth, t),
 diff --git a/web/src/pages/CrossSeedPage.tsx b/web/src/pages/CrossSeedPage.tsx
 index 41ba5b69..a46e17dc 100644
 --- a/web/src/pages/CrossSeedPage.tsx
